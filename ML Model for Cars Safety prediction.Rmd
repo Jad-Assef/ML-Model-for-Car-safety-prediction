@@ -1,0 +1,553 @@
+---
+title: "ML Model for Cars Safety prediction"
+author: "by Joud Alameh and Jad Assaf"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    theme: readable
+    highlight: espresso
+    number_sections: no
+    toc: yes
+    toc_depth: 3
+    toc_float:
+      collapsed: no
+      smooth_scroll: yes
+  pdf_document:
+    toc: yes
+    toc_depth: '3'
+---
+
+# Introduction
+
+  This assignment consists of analyzing a data set on the acceptability of cars according to the provided features.
+The features included are: buying price of the cars, price of their maintenance, number of doors, capacity for carrying people, size of the boot and estimated safety rating.
+
+# Libraries
+
+  First of all, we started by downloading and importing the libraries we will need throughout the assignment.
+
+```{r eval=TRUE}
+library(dplyr)
+library(corrplot)
+library(caret)
+library(pROC)
+library(MASS)
+library(class)
+library(boot)
+```
+
+
+# Exploring the Data
+
+## Importing the Data
+
+  First of all, we need to import the data that is in our csv file.
+We will change the names of our features to make it easier to interpret.
+
+``` {r collapse = TRUE}
+Car.data = read.csv("DataAssign2.csv",header=T,na.strings=c("", "na", "?"), stringsAsFactors = F)
+
+colnames(Car.data)[1] = "price"
+colnames(Car.data)[2] = "maintenance"
+colnames(Car.data)[3] = "doors"
+colnames(Car.data)[4] = "capacity"
+colnames(Car.data)[5] = "boot"
+colnames(Car.data)[6] = "safety"
+colnames(Car.data)[7] = "acceptability"
+
+```
+
+## Encoding
+
+  Now, to be able to plot the data and analyze it, we will encode each qualitative variable into a quantitative one.
+For this, we will use the `dplyr` library to encode the values of each feature in the way we want.
+
+```{r}
+Car.oneHotEncodingData = Car.data  #Used later on in the next chunk
+Car.data = Car.data %>% mutate(price = recode(price, 'low' = 1, 'med' = 2, 'high' = 3, 'vhigh' = 4))
+Car.data = Car.data %>% mutate(maintenance = recode(maintenance, 'low' = 1, 'med' = 2, 'high' = 3, 'vhigh' = 4))
+Car.data = Car.data %>% mutate(doors = recode(doors, '2' = 1, '3' = 2, '4' = 3, '5more' = 4))
+Car.data = Car.data %>% mutate(capacity = recode(capacity, '2' = 1, '4' = 2, 'more' = 3))
+Car.data = Car.data %>% mutate(boot = recode(boot, 'small' = 1, 'med' = 2, 'big' = 3))
+Car.data = Car.data %>% mutate(safety = recode(safety, 'low' = 1, 'med' = 2, 'high' = 3))
+Car.data = Car.data %>% mutate(acceptability = recode(acceptability, 'bad' = 0, 'good' = 1))
+summary(Car.data)
+attach(Car.data)
+```
+
+***N.B.: We tried to encode our variables using the "one-hot encoding" method, to see if it would make a difference with the way we manually encoded them, as shown below. This method proved faulty when tried with Logistic Regression (just to test the validity of the encoding) because our p-values were all close to 1, which was not rational. So, we reverted back to our original encoding instead.***
+
+```{r}
+dmy <- dummyVars("~ .", data = Car.oneHotEncodingData, fullRank = T)
+dat_transformed <- data.frame(predict(dmy, newdata = Car.oneHotEncodingData))
+
+set.seed(69)
+dat_transformed = dat_transformed[sample(1:nrow(dat_transformed)),]
+
+dat_transformed.train = dat_transformed[1:208,]
+dat_transformed.test = dat_transformed[209:260,]
+
+dat.fit = glm(acceptabilitygood~.,
+            data=dat_transformed.train, family=binomial)
+summary(dat.fit)
+```
+
+## Analysizing the Correlation
+
+  Now, we want to examine the correlation between the features and the response variable. The correlation matrix helps us analyze the correlation between the different features that we have. We are mainly interested to observe the correlation between the different features and the `acceptability` response factor.
+
+  Here we are using the `cor()` and `corrplot()` fnctions from the `corrplot` library to help us visualize our data.
+  
+```{r}
+correlation <- cor(Car.data)
+corrplot(correlation, method = "number", bg = "black")
+```
+ 
+  This plot shows us different trends of correlation between all the features.
+
+We can firstly observe that the `doors` feature displays a correlation coefficient close to 0 with all of the other features. Thus, we may assume that this feature is not significant in determining the response.
+
+Now, to emphasize on `acceptability`, we can observe that the `price` feature has a value of $-0.61$ indicating a strong negative correlation with `acceptability`. 
+
+`Maintenance` has a value of $-0.5$ showing a moderate negative correlation with the response variable. 
+
+In addition, `safety`, `capacity` and `boot`, with respective values of $0.43$, $0.3$ and $0.19$, show moderate positive correlation.
+  
+  Furthermore, we will plot our results graphically in order to visualize our assumptions from the correlation matrix. We initiated tables for each of the variables. The `table()` function returns a matrix containing the cardinality of the features in accordance with `acceptability`.
+  
+  
+```{r}
+Card.price = table(acceptability, price)
+Card.maintenance = table(acceptability, maintenance)
+Card.doors = table(acceptability, doors)
+Card.capacity = table(acceptability, capacity)
+Card.boot = table(acceptability, boot)
+Card.safety = table(acceptability, safety)
+```
+
+```{r}
+barplot(Card.price, beside = TRUE, col = c("red", "green"), names.arg = c("low", "med", "high", "vhigh"), main="Price")
+```
+ 
+```{r}
+barplot(Card.maintenance, beside = TRUE, col = c("red", "green"), names.arg = c("low", "med", "high", "vhigh"),main="Maintenance")
+```
+
+```{r}
+barplot(Card.doors, beside = TRUE, col = c("red", "green"), names.arg = c("2", "3", "4", "5more"),main="Doors")
+```
+
+```{r}
+barplot(Card.capacity, beside = TRUE, col = c("red", "green"), names.arg = c("2", "4", "more"),main="Capacity")
+```
+
+```{r}
+barplot(Card.boot, beside = TRUE, col = c("red", "green"), names.arg = c("small", "med", "big"),main="Boot")
+```
+
+```{r}
+barplot(Card.safety, beside = TRUE, col = c("red", "green"), names.arg = c("low", "med", "high"),main="Safety")
+```
+
+These plots come hand in hand with our correlation matrix, emphasizing that the `doors` features show little to no correlation with the response variable, while `price` shows high correlation.
+
+# Splitting the Data
+
+We decided to first shuffle the data set to avoid having imbalance. We first set a `seed` to get reproducible results. We then split the data into 80% `training` set and 20% `test` set.
+
+```{r}
+set.seed(69)
+Car.data = Car.data[sample(1:nrow(Car.data)),]
+Car.train = Car.data[1:(nrow(Car.data) * 0.8),]
+Car.test = Car.data[(nrow(Car.data) * 0.8 + 1): (nrow(Car.data)),]
+
+nrow(Car.train)
+nrow(Car.test)
+```
+
+This is the corresponding number of rows for `training` and `test` sets, respectively.
+
+# Logistic Regression
+
+We will use the `glm()` function to train our logistic regression model on our training set. We will first get our full model, with all the features. Although we showed, from our previous analysis, that the `doors` feature was not correlated with the response variable, we included the `doors` feature in the first model to display its insignificance through a high p-value.
+
+## Building the Model
+
+```{r}
+Car.glm.fit = glm(acceptability~+price+maintenance+doors+capacity+boot+safety,
+            data=Car.train,family=binomial)
+summary(Car.glm.fit)
+```
+
+The `doors` and `capacity` variables were of little significance, having a `p-value` greater than $0.05$, so, we decided to omit them.
+
+***We tried several interaction terms between all the features, none proved significant. Example below:***
+
+```{r}
+Car.glm.fit = glm(acceptability~+price+maintenance+boot+safety+price:maintenance,
+            data=Car.train,family=binomial)
+summary(Car.glm.fit)
+```
+
+The final logistic regression model that we landed on will consist of all the features except for the `doors` and `capacity` features, as they proved to be insignificant.
+
+```{r}
+Car.glm.fit = glm(acceptability~+price+maintenance+boot+safety,
+            data=Car.train, family=binomial)
+summary(Car.glm.fit)
+```
+
+## Testing the model
+
+Now we are testing the final logistic regression model on our hold-out set. The `predict()` function will return a probability for each observation in the test set. We started off by taking a threshold of $0.5$, which we used to assign 1(good) for the probabilities above $0.5$, and 0(bad) for those below that threshold. 
+
+```{r}
+Car.glm.probs = predict(Car.glm.fit, newdata = Car.test, type = "response")
+Car.glm.pred = rep(0, nrow(Car.test))
+Car.glm.pred[Car.glm.probs > .5] = 1
+```
+
+## Assessing the model
+
+### Test MSE
+
+We want to compute the test MSE to assess our model.
+
+```{r}
+Car.glm.testMse = mean((Car.test$acceptability-Car.glm.pred)^2)
+Car.glm.testMse
+```
+
+The value obtained was $0.01923$ 
+
+***It is worth mentioning that we have tried several seeds for our random function. We decided to go with the seed 69. For example, when trying a seed with value 313, we noticed an increase in our test MSE. This emphasizes on the fact that the validation set approach has some flaws. ***
+ 
+### Confusion Matrix
+ 
+Then, we computed the confusion matrix using the `caret` library using the function `confusionMatrix()`. 
+
+```{r}
+Car.glm.confMatrix = confusionMatrix(data=factor(Car.glm.pred), reference=factor(Car.test$acceptability), positive = "1")
+Car.glm.confMatrix
+```
+
+The matrix shows TP=27, TN=24, FP=1 and FN=0. The accuracy of our model is $0.9808$ on the test set. This value is considered high. However, it is not enough to assess our model. We need to look at our recall(Sensitivity) and precision(Pos Pred Value), both of which showed nearly perfect values of $1$ and $0.9643$ respectively. Recall being 1 indicates that we are correctly classifying all actual positive observations. And high precision indicates that we have a low number of incorrectly classified positive observations.
+
+### F1 Score
+
+Additionally, we computed the `F1 score` to assess our model, it showed a value of $0.9818$ which is really close to 1, indicating overall good performance.
+
+```{r}
+Car.glm.precision = posPredValue(data=factor(Car.glm.pred), reference=factor(Car.test$acceptability), positive = "1")
+Car.glm.recall = sensitivity(data=factor(Car.glm.pred), reference=factor(Car.test$acceptability), positive = "1")
+Car.glm.f1 = 2 * (Car.glm.precision * Car.glm.recall) / (Car.glm.precision + Car.glm.recall)
+Car.glm.f1
+```
+
+### ROC curve and AUC
+
+We will now analyze and construct the ROC curve. It is used to map the effect of differerent decision threasholds. And our curve displayed great performance as our AUC is close to $1$.
+
+```{r}
+par(pty = "s")
+Car.glm.roc=roc(Car.test$acceptability, Car.glm.probs, plot = TRUE)
+Car.glm.auc=auc(Car.glm.roc)
+Car.glm.auc
+```
+
+# LDA
+
+## Building the Model
+
+We will now compute the Linear Discriminant Analysis on the Car.data dataset, using `lda()` from the `MASS` library. We will not include the `doors` and `capacity` features as they proved invaluable for our analysis.
+
+
+```{r}
+Car.lda.fit = lda(acceptability~price+maintenance+boot+safety,
+                  data = Car.train)
+Car.lda.fit
+plot(Car.lda.fit)
+```
+
+- The LDA output shows $\hat{\pi}_{1} = 0.504$ and $\hat{\pi}_{2} =0.459$. This shows that 50.4% of training observations correspond to observation with acceptability of `bad`. We can also see the group means; these are the average of each predictor within each class, and are used by LDA as estimates of $\mu_{k}$.
+
+- The coefficients of linear discriminants output provides the linear combination of price, maintenance, boot and safety that are used to form the LDA decision rule. If $-1.001 × price-0.7981 × maintenance+ 0.6182 × boot+ 0.7408 × safety$ is large, then the LDA classifier will predict a market increase, and if it is small, then the LDA classifier will predict a market decline.
+
+-The `plot()` function produces plots of the linear discriminants, obtained by computing $-1.001 × price-0.7981 × maintenance+ 0.6182 × boot+ 0.7408 × safety$  for each of the observations.
+
+## Testing the model
+
+We will now be testing the final LDA model on the hold-out set.
+
+```{r}
+Car.lda.result = predict(Car.lda.fit, Car.test)
+Car.lda.probs = Car.lda.result$posterior[,2]
+Car.lda.pred = Car.lda.result$class
+```
+
+## Assessing the model
+
+### Test MSE
+
+```{r}
+Car.lda.testMse = mean((Car.test$acceptability-(as.numeric(Car.lda.pred) - 1))^2)
+Car.lda.testMse
+```
+
+The value of obtained was $0.07692$.
+
+### Confusion Matrix
+
+```{r}
+Car.lda.confMatrix = confusionMatrix(data=factor(Car.lda.pred), reference=factor(Car.test$acceptability), positive = "1")
+Car.lda.confMatrix
+```
+
+The matrix shows TP=27, TN=21, FP=4 and FN=0. The accuracy of our model is 0.9231 on the test set. This value is considered high. We need to look at our recall(Sensitivity) and precision(Pos Pred Value), both of which showed good values of $1$ and $0.8710$ respectively. Recall being 1 indicates that we are correctly classifying all actual positive observations. And moderately high precision indicates that we have a considerably low number of incorrectly classified positive observations.
+
+### F1 Score
+
+We will also compute the `F1 score` to assess our model, it showed a value of $0.9310$ which is also close to 1, indicating overall good performance.
+
+```{r}
+Car.lda.precision = posPredValue(data=factor(Car.lda.pred), reference=factor(Car.test$acceptability), positive = "1")
+Car.lda.recall = sensitivity(data=factor(Car.lda.pred), reference=factor(Car.test$acceptability), positive = "1")
+Car.lda.f1 = 2 * (Car.lda.precision * Car.lda.recall) / (Car.lda.precision + Car.lda.recall)
+Car.lda.f1
+```
+
+### ROC Curve and AUC
+
+We will now analyze and construct the ROC curve. It is used to map the effect of differerent decision threasholds. And our curve displayed great performance as our AUC is close to $1$.
+
+```{r}
+par(pty = "s")
+Car.lda.roc=roc(Car.test$acceptability, Car.lda.probs, plot = TRUE)
+Car.lda.auc=auc(Car.lda.roc)
+Car.lda.auc
+```
+
+# QDA
+
+## Building the model
+
+We will now compute the Quadratic Discriminant Analysis on the Car.data dataset, using the `qda()` funcction from `MASS`.
+
+```{r}
+Car.qda.fit = qda(acceptability~price+maintenance+boot+safety,
+                  data = Car.train)
+Car.qda.fit
+```
+
+## Testing the model
+
+```{r}
+Car.qda.result = predict(Car.qda.fit, Car.test)
+Car.qda.probs = Car.qda.result$posterior[,2]
+Car.qda.pred = Car.qda.result$class
+```
+
+## Assessing the model
+
+### Test MSE
+
+```{r}
+Car.lda.testMse = mean((Car.test$acceptability-(as.numeric(Car.lda.pred) - 1))^2)
+Car.lda.testMse
+```
+
+The value obtained was $0.0769$
+
+### Confusion Matrix
+
+```{r}
+Car.qda.confMatrix = confusionMatrix(data=factor(Car.qda.pred), reference=factor(Car.test$acceptability), positive = "1")
+Car.qda.confMatrix
+```
+
+The matrix shows TP=27, TN=24, FP=1 and FN=0. The accuracy of our model is $0.9808$ on the test set. This value is considered high. We need to look at our recall(Sensitivity) and precision(Pos Pred Value), both of which showed good values of $1$ and $0.9643$ respectively. Recall being 1 indicates that we are correctly classifying all actual positive observations. And moderately high precision indicates that we have a considerably low number of incorrectly classified positive observations.
+
+### F1 Score
+
+```{r}
+Car.qda.precision = posPredValue(data=factor(Car.qda.pred), reference=factor(Car.test$acceptability), positive = "1")
+Car.qda.recall = sensitivity(data=factor(Car.qda.pred), reference=factor(Car.test$acceptability), positive = "1")
+Car.qda.f1 = 2 * (Car.qda.precision * Car.qda.recall) / (Car.qda.precision + Car.qda.recall)
+Car.qda.f1
+```
+
+The F1 score obtained was $0.9818182$ which indicates overall good performance.
+
+### ROC Curve and AUC
+
+```{r}
+par(pty = "s")
+Car.qda.roc=roc(Car.test$acceptability, Car.qda.probs, plot = TRUE)
+Car.qda.auc=auc(Car.qda.roc)
+Car.qda.auc
+```
+
+We will now plot the ROC curves for all 3 models to compare their performance. We can observe that all models perform relatively well, with logistic regression and QDA being marginally better than LDA, but all having AUC values close to $1$ proving overall great performance on the given data.
+
+```{r}
+par(pty = "s")
+plot(Car.glm.roc, col = "green")
+lines(Car.lda.roc, col = "red")
+lines(Car.qda.roc, col = "blue")
+
+```
+
+The respective AUC values for all models:
+
+```{r echo = FALSE}
+print(paste("Logistic Regression: AUC = ", Car.glm.auc))
+print(paste("LDA: AUC = ", Car.lda.auc))
+print(paste("QDA: AUC = ", Car.qda.auc))
+```
+
+# KNN
+
+Now, we will use the `knn()` function from the `class` library to perform KNN.
+
+Compared to the other model-fitting functions we have seen so far, this one operates somewhat differently. `knn()` creates predictions with a single command, as opposed to a two-step process where we fit the model first and then use the model to make predictions. 
+
+## Preparing the Model
+
+Four inputs are needed for the function:
+
+1. A matrix labeled `Car.knn.train` below that contains the predictors related to the training data
+2. A matrix, denoted `Car.knn.test` below, that contains the predictors linked to the data that we want to forecast.
+3. A vector, denoted `Car.knn.acceptibility` below, that has the class labels for the training observations.
+4. A number representing `K`, the classifier's nearest neighbor count.
+
+The `price`, `maintenance`, `boot`, and `safety` variables are bound together into two matrices, one for the training set and the other for the test set, using the `cbind()` function, which is short for column bind.
+
+```{r}
+Car.knn.train = cbind(Car.train$price,Car.train$maintenance, Car.train$boot, Car.train$safety)
+Car.knn.test = cbind(Car.test$price, Car.test$maintenance, Car.test$boot, Car.test$safety)
+Car.knn.acceptability = Car.train$acceptability
+```
+
+## Testing the Model
+
+Now, we will plot knn with all values of K from 1 to 200. This gives us a graph that is highly complex. 
+
+```{r}
+k_vec = c()
+mse_vec = c()
+
+for (i in 1: 200) {
+  k_vec[i] = i
+  knn.temp = knn(Car.knn.train, Car.knn.test, Car.knn.acceptability, k = i)
+  mse_vec[i] = mean((Car.test$acceptability-(as.numeric(knn.temp) - 1))^2)
+}
+
+plot(k_vec, mse_vec, type = "b", xlab = "k values", ylab = "Test MSE", main = "K Values VS Test MSE")
+```
+
+So we reduced the graph to k up to 91 jumping in increments of 10, staying with odd numbers (1, 11, 22 ect..) since knn performs best with an odd number of neighbors (in case of balanced classes).
+
+```{r}
+simple_k_vec = c()
+simple_mse_vec = c()
+
+for (i in 1: 9) {
+  simple_k_vec[i] = i * 10 + 1
+  knn.temp = knn(Car.knn.train, Car.knn.test, Car.knn.acceptability, k = i * 10 + 1)
+  simple_mse_vec[i] = mean((Car.test$acceptability-(as.numeric(knn.temp) - 1))^2)
+}
+plot(simple_k_vec, simple_mse_vec, type = "b", xlab = "k values", ylab = "Test MSE", main = "K Values VS Test MSE")
+```
+
+***The best model was with K=31, as MSE showed lowest at that point (bottom of the characteristic U-shape graph). ***
+
+## Assessing the Model
+
+First, we need to re-run the `knn()` function on the data for k = 31 to get the prediction for the best `knn` model back.
+
+```{r}
+Car.knn.pred = knn(Car.knn.train, Car.knn.test, Car.knn.acceptability, k = 31)
+```
+
+### Confusion Matrix
+
+We then constructed the confusion matrix, we can see results slightly worse than the ones given in the previous models.
+
+```{r}
+Car.qda.confMatrix = confusionMatrix(data=factor(Car.knn.pred), reference=factor(Car.test$acceptability), positive = "1")
+Car.qda.confMatrix
+```
+
+The recall (Sensitivity) remained $1$, however we can see a slight drop in the model's precision with a value of $0.8710$
+
+### F1 Score
+
+```{r}
+Car.knn.precision = posPredValue(data=factor(Car.knn.pred), reference=factor(Car.test$acceptability), positive = "1")
+Car.knn.recall = sensitivity(data=factor(Car.knn.pred), reference=factor(Car.test$acceptability), positive = "1")
+Car.knn.f1 = 2 * (Car.knn.precision * Car.knn.recall) / (Car.knn.precision + Car.knn.recall)
+Car.knn.f1
+```
+
+The value obtained for the F1 score was $0.9310$, which displays great performance.
+
+# Resampling
+
+We decided to run the resampling methods on our logistic regression model.
+
+## 5-Fold Cross-Validation
+
+Here, we will divide our training set in the cross-validation approach using K=5. From the `caret` library, we use `trainControl()` to divide the set in the way we want. We then create the model in accordance to the logistic regression model.
+
+```{r}
+cv = trainControl(method = "cv", number = 5)
+model = suppressWarnings(train(acceptability ~ price+maintenance+boot+safety, data = Car.data, method = "glm", family = "binomial", trControl = cv))
+model
+```
+
+We notice that the test MSE of the cross-validation model is greater than that of the validation set approach using a seed of $69$, but it was less that others we tested (for example seed = 313). This shows that 5-fold cross validation produces more consistent results than the validation set approach.
+
+```{r}
+Car.5fold.MSE = model$result$RMSE^2
+Car.5fold.MSE
+```
+
+## Bootstrap
+
+The bootstrap approach can be used to assess the variability of the coefficient estimates and predictions from a statistical learning method.
+
+Here we use the bootstrap approach in order to assess the variability of the estimates for $\beta_0$ and $\beta_1$, the intercept and slope terms for the logistic regression model that uses price, maintenance, boot and safety to predict acceptability in the Car.data data set.
+
+```{r}
+boot.fn=function(data,index){
+ return(coef(glm(acceptability~+price+maintenance+boot+safety,
+            data=data, family=binomial, subset = index)))
+}
+
+suppressWarnings(boot.fn(Car.data, 1:260))
+```
+
+Moreover, bootstrap estimates for the intercept and slope parameters can be produced using the `boot.fn()` function, which selects observations at random using replacement
+
+```{r}
+suppressWarnings(boot.fn(Car.data, sample(260,260,replace=T)))
+```
+
+This indicates that the bootstrap estimate for $SE(\hat{\beta}_0)$ is 8.745042, and that the bootstrap estimate for $SE(\hat{\beta}_1)$ is 9.705377, that of $SE(\hat{\beta}_2)$ is 9.073464, that of $SE(\hat{\beta}_3)$ is 8.936688, and that of $SE(\hat{\beta}_4)$ is 8.722531.
+
+```{r}
+suppressWarnings(boot(Car.data, boot.fn, 10))
+```
+
+# Conclusion
+
+  All models (logistic regression, LDA, QDA, and KNN) showed good performance in classifying car acceptability based on the provided features. Logistic regression demonstrated slightly superior performance, but the choice of the best model may depend on specific considerations such as interpretability, computational efficiency, or requirements of the application. The inclusion of resampling methods enhances the robustness of the analysis.
+  
+  The initial phase of the analysis involved loading the dataset and applying necessary preprocessing steps. Notably, the use of the `dplyr` library facilitated a clean and efficient encoding of qualitative variables, enhancing the interpretability of the subsequent analyses. Renaming the columns for better clarity is a good practice for maintaining code readability.  The decision to exclude certain features, such as `doors` and `capacity`, due to their low correlation with the response variable demonstrated a thoughtful feature selection process. This not only streamlines the subsequent modeling steps but also contributes to avoiding multicollinearity issues.
+   
+   The `logistic regression` model emerges as a strong performer, demonstrating high accuracy and predictive power. The inclusion of alternative methods like `LDA`, `QDA`, and `KNN` provides a well-rounded exploration of different modeling paradigms. 
+   
+   The incorporation of resampling methods adds robustness to the conclusions drawn. The 5-fold cross validation showed us that the validation set approach is not a reliable method, as it gives random and scattered results depending on the seed chosen. However, the 5-fold cross validation gives results very close to each other regardless of the seed. In addition, the bootstrap technique helped us estimate the standard error of each predictor.
+
+
+
